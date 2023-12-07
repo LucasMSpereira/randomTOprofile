@@ -1,5 +1,25 @@
 timeNow() = replace(string(ceil(now(), Dates.Second)), ":" => "-")[6:end]
 
+# Create hdf5 file. Store data in a more efficient way
+function createFile(quants, sec, runID, nelx, nely)
+  # create file
+  quickTOdata = h5open(datasetPath * "data/$runID $sec $quants", "w")
+  # organize data into folders/groups
+  create_group(quickTOdata, "inputs")
+  # initialize data in groups
+  create_dataset(quickTOdata, "topologies", zeros(nely, nelx, quants))
+  # volume fraction
+  create_dataset(quickTOdata["inputs"], "VF", zeros(quants))
+  # representation of mechanical supports
+  create_dataset(quickTOdata["inputs"], "dispBoundConds", zeros(Int, (3,3,quants)))
+  # location and value of forces
+  create_dataset(quickTOdata["inputs"], "forces", zeros(2,4,quants))
+  # norm of displacement vector interpolated in the center of each element
+  create_dataset(quickTOdata, "disp", zeros(nely, nelx, 2*quants))
+  # return file id to write info during dataset generation
+  return quickTOdata
+end
+
 function randDiffInt(n, val)
   randVec = zeros(Int, n)
   randVec[1] = rand(1:val)
@@ -24,7 +44,7 @@ end
 
 # struct with parameters
 Parameters.@with_kw mutable struct FEAparameters
-  quants::Int = 1 # number of TO problems per section
+  quants::Int = 50 # number of TO problems per section
   V::Array{Real} = [0.4 + rand() * 0.5 for i in 1 : quants] # volume fractions
   problems::Any = Array{Any}(undef, quants) # store FEA problem structs
   meshSize::Tuple{Int, Int} = (140, 50) # Size of rectangular mesh
@@ -207,4 +227,163 @@ function randPins!(nels, FEAparams, dispBC, grid)
   pos = vec(reshape([myCells[ele][eleNode] for eleNode in 1:length(myCells[1]), ele in keys(randEl)], (:,1)))
   nodeSets = Dict("supps" => pos)
   return nodeSets, dispBC
+end
+
+# calculate stresses, principal components and strain energy density
+function calcConds(nels, disp, problemID, e, v, numCellNode)
+  # "Programming the finite element method", 5. ed, Wiley, pg 35
+  state = "stress"
+  # principal stresses
+  principals = permutedims(zeros(FEAparams.meshSize..., 2), (2, 1, 3))
+  σ = Array{Real}(undef, nels) # stresses
+  strainEnergy = zeros(FEAparams.meshSize)' # strain energy density in each element
+  vm = zeros(FEAparams.meshSize)' # von Mises for each element
+  centerDispGrad = Array{Real}(undef, nels, 2)
+  cellValue = CellVectorValues(
+    QuadratureRule{2, RefCube}(2), Lagrange{2,RefCube,ceil(Int, numCellNode/7)}()
+  )
+  el = 1
+  # determine stress-strain relationship dee according to 2D stress type
+  dee = deeMat(state, e, v)
+  # vecDisp = dispVec(disp) # rearrange disp into vector
+  # loop in elements
+  for cell in CellIterator(FEAparams.problems[problemID].ch.dh)
+    reinit!(cellValue, cell)
+    # interpolate gradient of displacements on the center of the element
+    # centerDispGrad = function_symmetric_gradient(cellValue, 1, vecDisp[celldofs(cell)])
+    centerDispGrad = function_symmetric_gradient(cellValue, 1, disp[celldofs(cell)])
+    # use gradient components to build strain vector ([εₓ ε_y γ_xy])
+    ε = [
+      centerDispGrad[1,1]
+      centerDispGrad[2,2]
+      centerDispGrad[1,2]+centerDispGrad[2,1]
+    ]
+    # use constitutive model to calculate stresses in the center of current element
+    stress = dee*ε
+    # take norm of stress vector to associate a scalar to each element
+    σ[el] = norm(stress)
+    # element cartesian position in mesh
+    elPos = findfirst(x->x==el,FEAparams.elementIDmatrix)
+    # extract principal stresses
+    principals[elPos, :] .= sort(eigvals([stress[1] stress[3]; stress[3] stress[2]]))
+    # build matrix with (center) von Mises value for each element
+    vm[elPos] = sqrt(stress'*[1 -0.5 0; -0.5 1 0; 0 0 3]*stress)
+    strainEnergy[elPos] = (1+v)*(stress[1]^2+stress[2]^2+2*stress[3]^2)/(2*e) - v*(stress[1]+stress[2])^2/(2*e)
+    el += 1
+  end
+  return vm, σ, principals, strainEnergy
+end
+
+# determine stress-strain relationship dee according to 2D stress type
+function deeMat(state, e, v)
+  if state == "strain"
+    # plane strain
+    dee = e*(1 - v)/((1 + v)*(1 - 2 * v))*
+      [1 v/(1 - v) 0;
+      v/(1 - v) 1 0;
+      0 0 (1 - 2*v)/(2*(1 - v))]
+  
+  elseif state == "stress"
+    # plane stress
+    dee = e/(1-v^2)*[
+    1 v 0
+    v 1 0
+    0 0 (1-v)/2
+    ]
+  elseif state == "axisymmetric"
+    
+    dee = e*(1 - v)/((1 + v)*(1 - 2 * v))*
+    [1 v/(1 - v) 0 v/(1 - v);
+    v/(1 - v) 1 0 v/(1 - v);
+    0 0 (1 - 2*v)/(2*(1 - v)) 0;
+    v/(1 - v) v/(1 - v) 0 1]
+  else
+    println("Invalid stress state.")
+  end
+  return dee
+end
+
+# check if sample was generated correctly (solved the FEA problem it was given and didn't swap loads)
+function checkSample(numForces, vals, quants, forces)
+  sProds = zeros(numForces)
+  grads = zeros(2,numForces)
+  avgs = similar(sProds)
+  # get physical quantity gradients and average value around locations of loads
+  for f in 1:numForces
+    grads[1,f], grads[2,f], avgs[f] = estimateGrads(vals, quants, round.(Int,forces[f,1:2])...)
+  end
+  # calculate dot product between normalized gradient and respective normalized load to check for alignment between the two
+  [sProds[f] = dot((grads[:,f]/norm(grads[:,f])),(forces[f,3:4]/norm(forces[f,3:4]))) for f in 1:numForces]
+  # ratio of averages of neighborhood values of scalar field
+  vmRatio = avgs[1]/avgs[2]
+  # ratio of load norms
+  loadRatio = norm(forces[1,3:4])/norm(forces[2,3:4])
+  # ratio of the two ratios above
+  ratioRatio = vmRatio/loadRatio
+  magnitude = false
+  # test alignment
+  alignment = sum(abs.(sProds)) > 1.8
+  if alignment
+    # test scalar neighborhood averages against force norms
+    magnitude = (ratioRatio < 1.5) && (ratioRatio > 0.55)
+  end
+  return alignment*magnitude
+end
+
+# estimate scalar gradient around element in mesh
+function estimateGrads(vals, quants, iCenter, jCenter)
+  peaks = Array{Any}(undef,quants)
+  Δx = zeros(quants)
+  Δy = zeros(quants)
+  avgs = 0.0
+  # pad original matrix with zeros along its boundaries to avoid index problems with kernel
+  cols = size(vals,2)
+  lines = size(vals,1)
+  vals = vcat(vals, zeros(quants,cols))
+  vals = vcat(zeros(quants,cols), vals)
+  vals = hcat(zeros(lines+2*quants,quants), vals)
+  vals = hcat(vals,zeros(lines+2*quants,quants))
+  for circle in 1:quants
+    # size of internal matrix
+    side = 2*(circle+1) - 1
+    # variation in indices
+    delta = convert(Int,(side-1)/2)
+    # build internal matrix
+    mat = vals[(iCenter-delta+quants):(iCenter+delta+quants),(jCenter-delta+quants):(jCenter+delta+quants)]
+    # calculate average neighborhood values
+    circle == quants && (avgs = mean(filter(!iszero,mat)))
+    # nullify previous internal matrix/center element
+    if size(mat, 1) < 4
+      mat[2, 2] = 0
+    else
+      mat[2:(end - 1) , 2:(end - 1)] .= 0
+    end
+    # store maximum value of current ring (and its position relative to the center element)
+    peaks[circle] = findmax(mat)
+    center = round(Int, (side + 0.01) / 2)
+    Δx[circle] = peaks[circle][2][2] - center
+    Δy[circle] = center - peaks[circle][2][1]
+  end
+  maxVals = [peaks[f][1] for f in keys(peaks)]
+  x̄ = Δx' * maxVals / sum(maxVals)
+  ȳ = Δy' * maxVals / sum(maxVals)
+  return x̄, ȳ, avgs
+
+end
+
+# write displacements to file
+function writeDispComps(quickTOdata, problemID, disp, FEAparams, numCellNode)
+  dispInterp = Array{Real}(undef, prod(FEAparams.meshSize), 2)
+  cellValue = CellVectorValues(QuadratureRule{2, RefCube}(2), Lagrange{2, RefCube, ceil(Int, numCellNode/7)}())
+  el = 1
+  for cell in CellIterator(FEAparams.problems[problemID].ch.dh) # loop in elements
+    reinit!(cellValue, cell)
+    # interpolate displacement (u, v) of element center based on nodal displacements.
+    dispInterp[el, :] = function_value(cellValue, 1, disp[celldofs(cell)])
+    el += 1
+  end
+  # add to dataset
+  quickTOdata["disp"][:, :, 2 * problemID - 1] = quad(FEAparams.meshSize..., dispInterp[:, 1])
+  quickTOdata["disp"][:, :, 2 * problemID] = quad(FEAparams.meshSize..., dispInterp[:, 2])
+  return dispInterp
 end
