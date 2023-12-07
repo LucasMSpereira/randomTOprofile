@@ -12,12 +12,12 @@ function methodThroughput(nSample::Int)
     problem, vf, _ = randomFEAproblem(FEAparams) # random problem
     solver = FEASolver(Direct, problem; xmin = 1e-6, penalty = TopOpt.PowerPenalty(3.0))
     solver()
-    comp = TopOpt.Compliance(solver) # compliance
+    comp = TopOpt.Compliance(problem, solver) # compliance
     filter = DensityFilter(solver; rmin = 3.0) # filtering to avoid checkerboard
-    obj = x -> comp(filter(PseudoDensities(x))) # objective
+    obj = x -> comp(filter(x)) # objective
     x0 = fill(vf, FEAparams.nElements) # starting densities (VF everywhere)
-    volfrac = TopOpt.Volume(solver)
-    constr = x -> volfrac(filter(PseudoDensities(x))) - vf # volume fraction constraint
+    volfrac = TopOpt.Volume(problem, solver)
+    constr = x -> volfrac(filter(x)) - vf # volume fraction constraint
     model = Nonconvex.Model(obj) # create optimization model
     Nonconvex.addvar!( # add optimization variable
       model, zeros(FEAparams.nElements), ones(FEAparams.nElements), init = x0
