@@ -32,6 +32,6 @@ function methodThroughput(nSample::Int)
   end
 end
 
-methodThroughput(5)
+methodThroughput(150)
 
 show(to)
