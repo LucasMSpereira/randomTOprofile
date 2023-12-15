@@ -2,7 +2,7 @@
 
 julia_version = "1.9.3"
 manifest_format = "2.0"
-project_hash = "b6c2c569de159ae2254970cafc9514411a919e9c"
+project_hash = "9626cf20234fad722e9ffcfae7c7b25c975dd232"
 
 [[deps.ADNLPModels]]
 deps = ["ForwardDiff", "LinearAlgebra", "NLPModels", "Requires", "ReverseDiff", "SparseArrays"]
@@ -1806,8 +1806,8 @@ uuid = "0796e94c-ce3b-5d07-9a54-7f471281c624"
 version = "0.5.26"
 
 [[deps.TopOpt]]
-deps = ["AbstractDifferentiation", "ChainRulesCore", "ColorSchemes", "Distributions", "Einsum", "Ferrite", "FileIO", "Flux", "ForwardDiff", "GeometryBasics", "GeometryTypes", "IterativeSolvers", "JSON", "JuliaFormatter", "LinearAlgebra", "MacroTools", "MappedArrays", "NearestNeighbors", "Nonconvex", "NonconvexMMA", "NonconvexPercival", "NonconvexSemidefinite", "Parameters", "Pkg", "Preconditioners", "Random", "Reexport", "Requires", "Revise", "Setfield", "SparseArrays", "StaticArrays", "Statistics", "StatsFuns", "Tensors", "Test", "TimerOutputs", "VTKDataTypes", "WriteVTK", "Zygote"]
-git-tree-sha1 = "29d0865fc53e2e75b7576170c4d11401707ba577"
+deps = ["AbstractDifferentiation", "ChainRulesCore", "ColorSchemes", "Distributions", "Einsum", "Ferrite", "FileIO", "Flux", "ForwardDiff", "GeometryBasics", "GeometryTypes", "InteractiveUtils", "IterativeSolvers", "JSON", "JuliaFormatter", "LinearAlgebra", "MacroTools", "MappedArrays", "NearestNeighbors", "Nonconvex", "NonconvexMMA", "NonconvexPercival", "NonconvexSemidefinite", "Parameters", "Pkg", "Preconditioners", "Random", "Reexport", "Requires", "Revise", "Setfield", "SparseArrays", "StaticArrays", "Statistics", "StatsFuns", "Tensors", "Test", "TimerOutputs", "VTKDataTypes", "WriteVTK", "Zygote"]
+path = "C:\\Users\\kaoid\\.julia\\dev\\TopOpt"
 uuid = "53a1e1a5-51bb-58a9-8a02-02056cc81109"
 version = "0.8.1"
 
