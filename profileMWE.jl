@@ -1,18 +1,23 @@
-using TimerOutputs, Ferrite, TopOpt, Parameters, Dates
+using Revise, TimerOutputs, Ferrite, TopOpt, Parameters, Dates, Zygote
 using TopOpt.TopOptProblems.InputOutput.INP.Parser: InpContent
 include("./utils.jl")
 import Nonconvex
 Nonconvex.@load NLopt
 const to = TimerOutput()
-reset_timer!(to)
+
+function construct()
+  problem, vf, _ = randomFEAproblem(FEAparams) # random problem
+  solver = FEASolver(Direct, problem; xmin = 1e-6, penalty = TopOpt.PowerPenalty(3.0))
+  @timeit to "solver" solver()
+  comp = TopOpt.Compliance(solver) # compliance
+  return comp, solver, problem, vf
+end
 
 function methodThroughput(nSample::Int)
+  reset_timer!(to)
   for sample in 1:nSample
     println("Sample $sample   $(timeNow())")
-    problem, vf, _ = randomFEAproblem(FEAparams) # random problem
-    solver = FEASolver(Direct, problem; xmin = 1e-6, penalty = TopOpt.PowerPenalty(3.0))
-    solver()
-    comp = TopOpt.Compliance(solver) # compliance
+    comp, solver, _, vf = construct()
     filter = DensityFilter(solver; rmin = 3.0) # filtering to avoid checkerboard
     obj = x -> comp(filter(PseudoDensities(x))) # objective
     x0 = fill(vf, FEAparams.nElements) # starting densities (VF everywhere)
@@ -27,6 +32,6 @@ function methodThroughput(nSample::Int)
   end
 end
 
-methodThroughput(100)
+methodThroughput(5)
 
 show(to)
