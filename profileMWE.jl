@@ -16,7 +16,7 @@ end
 function methodThroughput(nSample::Int)
   reset_timer!(to)
   for sample in 1:nSample
-    println("Sample $sample   $(timeNow())")
+    sample % 10 == 0 && println("Sample $sample   $(timeNow())")
     comp, solver, _, vf = construct()
     filter = DensityFilter(solver; rmin = 3.0) # filtering to avoid checkerboard
     obj = x -> comp(filter(PseudoDensities(x))) # objective
